@@ -1,1 +1,1 @@
-# All-22-Atlas-A22A-
+# All-22 Atlas (A22A)
