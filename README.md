@@ -1,49 +1,50 @@
 # All-22 Atlas (A22A)
 
-All-22 Atlas (A22A) is a research playground for exploring American football analytics with discipline.
-This bootstrap focuses on the first six phases of the platform so contributors can extend data, features,
-and models without sacrificing governance or reproducibility.
-
-## Phase Overview
-
-| Phase | Focus | Key Artefacts |
-| --- | --- | --- |
-| 1 | Scaffolding & Governance | Doctor checks, run registry, seed policy, CI harness |
-| 2 | Data Spine | `staged/` contract stubs, ingestion harness, schema enforcement |
-| 3 | Feature Store v1 | Polars lazy pipelines, leakage guard, PSI drift hook |
-| 4 | Baseline Model | Forward-chaining CV stub, calibration artefact placeholders |
-| 5 | Bayesian Team Strength | Recency decay configuration, dummy posterior export |
-| 6 | Simulation Engine v1 | QMC/CI hooks, slate orchestration scaffolding |
+A22A is a world-model hyperensemble for NFL outcomes: odds-agnostic core signals, a fast drive-level simulator, and calibrated probabilities with selective precision and abstention.
 
 ## Quickstart
-
-1. **Environment** – Install Python 3.11 and create a virtual environment (e.g. `python -m venv .venv && source .venv/bin/activate`).
-2. **Dependencies** – Install the project in editable mode: `pip install -e .[dev]`.
-3. **Secrets** – Copy `.env.sample` to `.env` and populate the required API keys.
-4. **Doctor** – Run `make doctor` to validate governance, seeds, and placeholder SLOs.
-5. **Workflow Targets** – Use the remaining Make targets (`make ingest`, `make features`, `make train`, `make sim`, `make report`) as you flesh out each phase.
-6. **CI** – Push changes and rely on the GitHub Actions workflow to run the doctor and unit tests.
-
-## Repository Layout
-
-```
-a22a/                  Python package with tools, data, features, models, sim, and reports
-configs/defaults.yaml  Centralised configuration (seeds, SLOs, knobs)
-staged/                Scratch area for intermediate artefacts (tracked empty)
-Makefile               Workflow entry points
+```bash
+# Python 3.11 recommended
+pip install -e .
+make doctor     # smoke checks
+make ingest     # stage data (no-op until sources wired)
+make features   # build feature snapshots (stubs)
+make train      # baseline (stub)
+make sim        # simulator (stub)
 ```
 
-## Governance Checklist
+Design
+	•	Phases 1–16 with acceptance checklists in /docs (or Drive).
+	•	No betting odds in core features/models (odds only for CLV/timing later).
+	•	Doctor enforces seeds, SLO placeholders, and license/odds guardrails.
 
-- Seeds and configuration are centrally managed in YAML.
-- Secrets are injected via environment variables only.
-- Odds provider domains are explicitly banned from feature/model code.
-- SLOs for ETL, feature engineering, modelling, and simulation are asserted in the doctor.
-- Run registry entries ensure every execution is traceable.
+### `pyproject.toml`
+```toml
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
 
-## Development Tips
+[project]
+name = "a22a"
+version = "0.0.1"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "polars>=1.6",
+  "duckdb>=1.0",
+  "scikit-learn>=1.5",
+  "lightgbm>=4.3",
+  "catboost>=1.2",
+  "pyyaml>=6.0",
+  "python-dotenv>=1.0",
+  "meteostat>=1.6",
+  "requests>=2.32",
+  "tqdm>=4.66",
+  "pytest>=8",
+  "pytest-cov>=5",
+]
 
-- Keep modules pure and side-effect free until explicitly required by later phases.
-- Extend tests alongside the doctor to guard contracts as they evolve.
-- Update `configs/defaults.yaml` when introducing new knobs; never hardcode values in code.
-
+[tool.pytest.ini_options]
+addopts = "-q"
+```
