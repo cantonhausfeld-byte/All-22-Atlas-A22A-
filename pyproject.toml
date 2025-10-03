@@ -23,5 +23,8 @@ dependencies = [
   "pytest-cov>=5",
 ]
 
+[tool.setuptools.packages.find]
+include = ["a22a*"]
+
 [tool.pytest.ini_options]
 addopts = "-q"
