@@ -1,0 +1,5 @@
+etl_budget_seconds: 300
+feature_budget_seconds: 120
+training_budget_seconds: 600
+simulation_budget_seconds: 180
+report_budget_seconds: 120
