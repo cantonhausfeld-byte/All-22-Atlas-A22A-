@@ -1,90 +1,30 @@
-"""Baseline model training scaffold for Phase 4."""
-from __future__ import annotations
+"""
+Phase 4: baseline training stub with purged forward-chaining CV placeholder and calibration scaffold.
+"""
+import numpy as np, pandas as pd, time, pathlib, yaml
+from sklearn.linear_model import LogisticRegression
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.metrics import brier_score_loss, log_loss
 
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, Iterable, List, Sequence
+def main():
+    t0 = time.time()
+    cfg = yaml.safe_load(open("configs/defaults.yaml"))
+    models_dir = pathlib.Path(cfg["paths"]["models"])
+    models_dir.mkdir(parents=True, exist_ok=True)
 
-import numpy as np
-import polars as pl
-import yaml
+    # Dummy training set (replace with real features later)
+    rng = np.random.default_rng(42)
+    X = rng.normal(size=(500, 5))
+    y = (X[:,0] + 0.3*rng.normal(size=500) > 0).astype(int)
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = REPO_ROOT / "configs" / "defaults.yaml"
-FEATURE_REFERENCE = Path("data") / "features" / "reference.parquet"
-MODEL_DIR = Path("data") / "models"
-PLOTS_DIR = Path("reports") / "baseline"
-CALIBRATION_PLOT = PLOTS_DIR / "calibration_placeholder.png"
-
-
-@dataclass(frozen=True)
-class Fold:
-    train_weeks: Sequence[int]
-    validation_weeks: Sequence[int]
-
-
-def load_config() -> Dict[str, object]:
-    with CONFIG_PATH.open("r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh) or {}
-
-
-def load_features() -> pl.DataFrame:
-    if FEATURE_REFERENCE.exists():
-        return pl.read_parquet(FEATURE_REFERENCE)
-    return pl.DataFrame(
-        {
-            "season": [],
-            "week": [],
-            "game_id": [],
-            "team_id": [],
-            "target": [],
-        }
-    )
-
-
-def forward_chaining_schedule(weeks: Iterable[int], purge_gap: int) -> List[Fold]:
-    ordered = sorted(set(int(week) for week in weeks))
-    folds: List[Fold] = []
-    for idx in range(1, len(ordered)):
-        validation_week = ordered[idx]
-        train_cutoff = validation_week - purge_gap
-        train_weeks = [week for week in ordered[:idx] if week <= train_cutoff]
-        if not train_weeks:
-            continue
-        folds.append(Fold(train_weeks=train_weeks, validation_weeks=[validation_week]))
-    return folds
-
-
-def calibration_stub(path: Path) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("calibration placeholder", encoding="utf-8")
-    return path
-
-
-def train_stub(features: pl.DataFrame, folds: Sequence[Fold]) -> Dict[str, object]:
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    model_path = MODEL_DIR / "baseline_model_placeholder.npz"
-    np.savez(model_path, metadata="baseline placeholder")
-    return {
-        "folds": len(folds),
-        "model_path": model_path,
-    }
-
-
-def main() -> None:
-    config = load_config()
-    feature_table = load_features()
-    baseline_cfg = config.get("models", {}).get("baseline", {})
-    purge_gap = int(baseline_cfg.get("purging_weeks", 1))
-    folds = forward_chaining_schedule(feature_table.get_column("week") if "week" in feature_table.columns else [], purge_gap)
-    artefacts = train_stub(feature_table, folds)
-    calibration_stub(CALIBRATION_PLOT)
-    print(
-        "[train] baseline stub complete | folds=%s | model=%s"
-        % (artefacts["folds"], artefacts["model_path"])
-    )
-    print(f"[train] calibration placeholder -> {CALIBRATION_PLOT}")
-
+    base = LogisticRegression(max_iter=1000)
+    base.fit(X, y)
+    clf = CalibratedClassifierCV(base, method="isotonic", cv=3)
+    clf.fit(X, y)
+    p = clf.predict_proba(X)[:,1]
+    print(f"[baseline] brier={brier_score_loss(y,p):.4f} logloss={log_loss(y,p):.4f}")
+    (models_dir / "baseline_stub.pkl").write_bytes(b"stub")
+    print(f"[baseline] trained + calibrated in {time.time()-t0:.2f}s (stub)")
 
 if __name__ == "__main__":
     main()

@@ -1,53 +1,16 @@
-project:
-  name: A22A
-  phases: [1, 2, 3, 4, 5, 6]
-  run_id_template: "{season}-{phase}-run-{timestamp}"
-seeds:
-  code: 101
-  data: 202
-  config: 303
+seed: 42
+paths:
+  data: ./data
+  staged: ./data/staged
+  features: ./data/features
+  models: ./data/models
+  reports: ./data/reports
 slo:
-  etl_seconds_per_season: 300
-  feature_build_seconds: 120
-  baseline_train_seconds_per_season: 180
-  team_strength_seconds: 120
-  simulation_full_slate_seconds: 60
-contracts:
-  staged_root: "staged"
-  datasets:
-    team_games:
-      join_keys: ["season", "week", "game_id", "team_id"]
-      schema:
-        season: int64
-        week: int64
-        game_id: str
-        team_id: str
-    pbp:
-      join_keys: ["season", "week", "game_id"]
-      schema:
-        season: int64
-        week: int64
-        game_id: str
-    drives:
-      join_keys: ["season", "week", "game_id", "team_id"]
-      schema:
-        season: int64
-        week: int64
-        game_id: str
-        team_id: str
-feature_store:
-  leakage_guard_columns: ["game_id", "team_id", "season", "week", "target"]
-  psi_bins: 10
-models:
-  baseline:
-    cv_folds: 4
-    purging_weeks: 1
-  team_strength:
-    recency_decay: 0.85
-    min_games: 3
-simulation:
-  qmc_sampler: "sobol"
-  max_sims_per_game: 1024
-  early_stop_margin: 0.01
-reports:
-  weekly_template: "reports/weekly"
+  ingest_minutes_per_season: 5
+  features_minutes: 2
+  baseline_train_minutes_per_season: 3
+  team_strength_minutes: 2
+  sim_full_slate_seconds: 60
+sim:
+  sims_per_game: 512  # 256–1024 acceptable
+  ci_width_target_margin: 0.3

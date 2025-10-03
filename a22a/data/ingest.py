@@ -1,45 +1,19 @@
-"""Phase 2 ingestion scaffold."""
-from __future__ import annotations
+"""
+Phase 2: creates staged/ directories and no-op ingest until sources are wired.
+"""
+import os, pathlib, yaml
 
-from pathlib import Path
-from typing import Dict
+DEFAULTS = "configs/defaults.yaml"
 
-import polars as pl
-
-from a22a.data import contracts
-
-STAGED_DIR = Path("staged")
-
-
-def ensure_staged_dir() -> Path:
-    STAGED_DIR.mkdir(parents=True, exist_ok=True)
-    return STAGED_DIR
-
-
-def build_empty_tables() -> Dict[str, pl.DataFrame]:
-    """Create empty tables based on configured contracts."""
-
-    tables: Dict[str, pl.DataFrame] = {}
-    for name, contract in contracts.load_contracts().items():
-        lazy = contract.lazy_frame()
-        tables[name] = lazy.collect()
-    return tables
-
-
-def validate_tables(tables: Dict[str, pl.DataFrame]) -> None:
-    for name, frame in tables.items():
-        contracts.assert_contract(name, frame)
-
-
-def main() -> None:
-    ensure_staged_dir()
-    tables = build_empty_tables()
-    validate_tables(tables)
-    print("[ingest] staged directory ready at", ensure_staged_dir())
-    print("[ingest] no raw sources available yet; produced empty tables:")
-    for name, frame in tables.items():
-        print(f"    - {name}: {frame.shape[0]} rows, columns={frame.columns}")
-
+def main():
+    cfg = {}
+    if pathlib.Path(DEFAULTS).exists():
+        cfg = yaml.safe_load(open(DEFAULTS))
+    staged = pathlib.Path(cfg.get("paths",{}).get("staged","./data/staged"))
+    staged.mkdir(parents=True, exist_ok=True)
+    (staged / ".keep").write_text("staged ready\n")
+    print(f"[ingest] staged path ready at: {staged.resolve()}")
+    print("[ingest] no-op complete (wire sources in Phase 2).")
 
 if __name__ == "__main__":
     main()
