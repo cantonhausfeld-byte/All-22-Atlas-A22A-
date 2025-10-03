@@ -1,1 +1,4 @@
-# placeholder run registry
+# run registry — verification on 2025-10-03T19:37:46Z
+- make doctor: SLO budgets printed ingest<=5min/season, features<=2min, baseline<=3min/season, team_strength<=2min, sim_full_slate<=60s.
+- make ingest/features/train: baseline_metrics.json -> brier=0.25, logloss=0.6931, roc_auc=0.5; reliability.parquet shows single bin with CI [0.5,0.6].
+- make sim: summary.json shows BUF-KC margin_ci_width=0.482 with 2048 samples, hitting max draw cap (target 0.3, stub data) but early-stop guard engaged.
