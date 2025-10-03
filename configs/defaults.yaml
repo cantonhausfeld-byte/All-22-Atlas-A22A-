@@ -11,6 +11,8 @@ slo:
   baseline_train_minutes_per_season: 3
   team_strength_minutes: 2
   sim_full_slate_seconds: 60
+ingest:
+  seasons: [2023]
 sim:
   sims_per_game: 512  # 256–1024 acceptable
   ci_width_target_margin: 0.3
