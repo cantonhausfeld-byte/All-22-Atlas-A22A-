@@ -1,10 +1,10 @@
 .env
 .venv/
 /data/
-/staged/*.parquet
-/staged/*.json
-/staged/*.csv
-/reports/
-a22a.egg-info/
+/staged/
+!staged/.gitkeep
 __pycache__/
+*.py[cod]
 .DS_Store
+*.egg-info/
+reports/
