@@ -13,6 +13,7 @@ import polars as pl
 from sklearn.calibration import calibration_curve
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import brier_score_loss, log_loss
 
 FEATURE_DIR = Path("data") / "features"
 MODEL_DIR = Path("data") / "model"
@@ -39,14 +40,22 @@ def forward_chaining_schedule(weeks: Iterable[int], purge_gap: int = 1) -> List[
     return folds
 
 
-def _load_feature_table() -> pl.DataFrame:
+def _iter_feature_files() -> List[Path]:
+    """Return the partitioned feature parquet paths in deterministic order."""
+
     if not FEATURE_DIR.exists():
         raise FileNotFoundError("Feature directory missing – run `make features` first")
-    frames: List[pl.DataFrame] = []
-    for path in sorted(FEATURE_DIR.rglob("*.parquet")):
-        frames.append(pl.read_parquet(path))
-    if not frames:
+
+    # Only include partitioned weekly files to avoid double counting the
+    # reference snapshot written alongside them.
+    paths = sorted(FEATURE_DIR.glob("season=*/week=*.parquet"))
+    if not paths:
         raise FileNotFoundError("No feature parquet files found")
+    return paths
+
+
+def _load_feature_table() -> pl.DataFrame:
+    frames = [pl.read_parquet(path) for path in _iter_feature_files()]
     return pl.concat(frames, how="vertical")
 
 
@@ -81,6 +90,27 @@ def _calibrate_probabilities(probs: np.ndarray, y_true: np.ndarray) -> tuple[np.
     calibrator.fit(probs, y_true)
     calibrated = calibrator.transform(probs)
     return calibrated, "isotonic"
+
+
+def _expected_calibration_error(y_true: np.ndarray, probs: np.ndarray, bins: int = 10) -> float:
+    """Compute the ECE using equally spaced bins."""
+
+    if len(probs) == 0:
+        return 0.0
+
+    bin_edges = np.linspace(0.0, 1.0, bins + 1)
+    bin_indices = np.digitize(probs, bin_edges, right=True)
+    total = len(probs)
+    ece = 0.0
+    for bin_id in range(1, bins + 1):
+        mask = bin_indices == bin_id
+        if not np.any(mask):
+            continue
+        bin_prob = probs[mask].mean()
+        bin_true = y_true[mask].mean()
+        weight = mask.sum() / total
+        ece += weight * abs(bin_true - bin_prob)
+    return float(ece)
 
 
 def _plot_reliability(y_true: np.ndarray, probs: np.ndarray) -> None:
@@ -148,6 +178,13 @@ def train_baseline(features: pl.DataFrame) -> Dict[str, object]:
     oof_df["win_prob_calibrated"] = calibrated_probs
     _plot_reliability(oof_df["target"].to_numpy(), calibrated_probs)
 
+    y_true = oof_df["target"].to_numpy()
+    metrics = {
+        "brier_score": float(brier_score_loss(y_true, calibrated_probs)),
+        "log_loss": float(log_loss(y_true, np.clip(calibrated_probs, 1e-6, 1 - 1e-6))),
+        "ece": _expected_calibration_error(y_true, calibrated_probs),
+    }
+
     final_model = lgb.LGBMClassifier(
         objective="binary",
         n_estimators=300,
@@ -178,6 +215,7 @@ def train_baseline(features: pl.DataFrame) -> Dict[str, object]:
         "features": feature_columns,
         "predictions_path": PREDICTION_PATH,
         "reliability_plot": RELIABILITY_PATH,
+        **metrics,
     }
     return summary
 
@@ -188,6 +226,11 @@ def main() -> None:
     print(
         "[train] baseline complete | folds={folds} | calibration={calibration_method}"
         .format(**summary)
+    )
+    print(
+        "[train] metrics | brier={brier_score:.4f} | logloss={log_loss:.4f} | ece={ece:.4f}".format(
+            **summary
+        )
     )
     print(f"[train] predictions saved to {summary['predictions_path']}")
     print(f"[train] reliability plot saved to {summary['reliability_plot']}")

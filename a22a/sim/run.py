@@ -111,7 +111,11 @@ def _simulate_game(
             if width <= config.ci_width:
                 break
 
-    result_frame = pl.DataFrame(results, schema=["iteration", "home_points", "away_points", "margin", "total_points"])
+    result_frame = pl.DataFrame(
+        results,
+        schema=["iteration", "home_points", "away_points", "margin", "total_points"],
+        orient="row",
+    )
     summary = pl.DataFrame(
         {
             "game_id": [game_id],
@@ -131,7 +135,11 @@ def _ladder(frame: pl.DataFrame, game_id: str) -> pl.DataFrame:
         series = frame[stat]
         for q in quantiles:
             ladder_rows.append((game_id, stat, q, series.quantile(q)))
-    return pl.DataFrame(ladder_rows, schema=["game_id", "stat", "quantile", "value"])
+    return pl.DataFrame(
+        ladder_rows,
+        schema=["game_id", "stat", "quantile", "value"],
+        orient="row",
+    )
 
 
 def main() -> None:
