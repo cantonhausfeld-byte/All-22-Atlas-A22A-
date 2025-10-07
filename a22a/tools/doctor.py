@@ -29,6 +29,20 @@ def static_scan_for_odds(root="a22a"):
             offenders.append(str(p))
     return offenders
 
+
+def check_for_odds_imports(root="a22a"):
+    offenders = []
+    for p in pathlib.Path(root).rglob("*.py"):
+        if p.name == "doctor.py" and "tools" in p.parts:
+            continue
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(("import", "from")) and "odds" in stripped.lower():
+                offenders.append(str(p))
+                break
+    return offenders
+
 def check_env_only_secrets():
     # Ensure no hardcoded API keys in repo
     offenders = []
@@ -70,6 +84,13 @@ def run_doctor(ci=False) -> bool:
     else:
         print("[odds] OK: no prohibited odds usage in code")
 
+    odds_import_hits = check_for_odds_imports("a22a")
+    if odds_import_hits:
+        print("[odds-imports] FAIL: odds-related imports detected in", odds_import_hits)
+        return False
+    else:
+        print("[odds-imports] OK: no odds imports detected")
+
     # Decision module import guard
     decision_import_offenders = []
     for path in pathlib.Path("a22a/decision").rglob("*.py"):
@@ -92,10 +113,13 @@ def run_doctor(ci=False) -> bool:
     # Module presence report
     print("[modules] decision present:", pathlib.Path("a22a/decision").exists())
     print("[modules] units present:", pathlib.Path("a22a/units").exists())
+    print("[modules] strategy present:", pathlib.Path("a22a/strategy").exists())
+    print("[modules] context present:", pathlib.Path("a22a/context").exists())
 
     # Quick runtime taps (best-effort)
-    for label in ("decision", "uer"):
+    for label in ("decision", "uer", "strategy", "context"):
         try:
+            tap_start = time.time()
             result = subprocess.run(
                 ["make", label],
                 stdout=subprocess.PIPE,
@@ -105,7 +129,8 @@ def run_doctor(ci=False) -> bool:
                 text=True,
             )
             status = "OK" if result.returncode == 0 else f"exit={result.returncode}"
-            print(f"[tap] make {label}: {status}")
+            elapsed = time.time() - tap_start
+            print(f"[tap] make {label}: {status} in {elapsed:.2f}s")
             if result.stdout:
                 preview = "\n".join(result.stdout.splitlines()[:5])
                 print(f"[tap] output preview:\n{preview}")
