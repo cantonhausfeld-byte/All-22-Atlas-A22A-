@@ -18,10 +18,14 @@ def test_uer_handles_thin_samples():
             {
                 "unit_id": "THIN_UNIT",
                 "axis": axis,
-                "value": 0.02,
+                "epa_per_play": 0.02,
+                "success_rate": 0.48,
+                "ttt": 2.6,
+                "opponent_epa_allowed": 0.0,
+                "opponent_success_allowed": 0.47,
                 "snaps": 5,
                 "weeks_ago": 1,
-                "opponent_strength": 0.0,
+                "injury_factor": 1.0,
             }
             for axis in UER_AXES
         ]
