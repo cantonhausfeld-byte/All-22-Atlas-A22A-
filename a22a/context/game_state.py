@@ -18,6 +18,7 @@ import polars as pl
 import yaml
 
 from a22a.data import sample_data
+from a22a.utils.pandas_compat import to_pandas_safe
 
 CONFIG_PATH = pathlib.Path("configs/defaults.yaml")
 PARTIAL_SIM_KEYS = {
@@ -72,10 +73,7 @@ def _load_table(root: pathlib.Path, name: str) -> pl.DataFrame:
 
 
 def _polars_to_pandas(frame: pl.DataFrame) -> pd.DataFrame:
-    try:
-        return frame.to_pandas(use_pyarrow_extension_array=True).convert_dtypes()
-    except ModuleNotFoundError:
-        return pd.DataFrame(frame.to_dicts()).convert_dtypes()
+    return to_pandas_safe(frame)
 
 
 # ---------------------------------------------------------------------------

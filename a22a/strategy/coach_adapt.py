@@ -37,6 +37,7 @@ from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
 from a22a.data import sample_data
+from a22a.utils.pandas_compat import to_pandas_safe
 
 CONFIG_PATH = pathlib.Path("configs/defaults.yaml")
 
@@ -78,10 +79,7 @@ def _load_table(root: pathlib.Path, name: str) -> pl.DataFrame:
 
 
 def _polars_to_pandas(df: pl.DataFrame) -> pd.DataFrame:
-    try:
-        return df.to_pandas(use_pyarrow_extension_array=True).convert_dtypes()
-    except ModuleNotFoundError:
-        return pd.DataFrame(df.to_dicts()).convert_dtypes()
+    return to_pandas_safe(df)
 
 
 def _coach_lookup(games: pd.DataFrame) -> Dict[Tuple[str, str], str]:

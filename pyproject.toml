@@ -11,6 +11,7 @@ dependencies = [
   "pandas>=2.2",
   "polars>=1.6",
   "duckdb>=1.0",
+  "pyarrow>=14,<19",
   "scikit-learn>=1.5",
   "lightgbm>=4.3",
   "catboost>=1.2",
