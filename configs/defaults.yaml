@@ -16,3 +16,14 @@ ingest:
 sim:
   sims_per_game: 512  # 256–1024 acceptable
   ci_width_target_margin: 0.3
+decision:
+  k_top: 5
+  prob_threshold: 0.62
+  kelly_fraction: 0.25
+  max_stake_pct_per_bet: 0.02
+  max_stake_pct_per_game: 0.03
+  max_weekly_exposure_pct: 0.15
+uer:
+  recency_half_life_weeks: 6
+  ridge_lambda: 10.0
+  min_snaps_threshold: 50

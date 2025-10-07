@@ -1,4 +1,4 @@
-import os, sys, time, hashlib, re, pathlib, json
+import os, sys, time, hashlib, re, pathlib, json, subprocess
 from dataclasses import dataclass
 
 BLOCKED_TOKENS = [
@@ -70,11 +70,49 @@ def run_doctor(ci=False) -> bool:
     else:
         print("[odds] OK: no prohibited odds usage in code")
 
+    # Decision module import guard
+    decision_import_offenders = []
+    for path in pathlib.Path("a22a/decision").rglob("*.py"):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for line in text.splitlines():
+            if line.strip().startswith(("import", "from")) and "odds" in line.lower():
+                decision_import_offenders.append(str(path))
+                break
+    if decision_import_offenders:
+        print("[decision] FAIL: odds-related imports detected in", decision_import_offenders)
+        return False
+    print("[decision] imports OK (no odds modules)")
+
     # Directory structure sanity
     expected_dirs = ["data", "a22a", "configs"]
     for d in expected_dirs:
         pathlib.Path(d).mkdir(parents=True, exist_ok=True)
     print("[fs] structure OK and writable")
+
+    # Module presence report
+    print("[modules] decision present:", pathlib.Path("a22a/decision").exists())
+    print("[modules] units present:", pathlib.Path("a22a/units").exists())
+
+    # Quick runtime taps (best-effort)
+    for label in ("decision", "uer"):
+        try:
+            result = subprocess.run(
+                ["make", label],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=10,
+                check=False,
+                text=True,
+            )
+            status = "OK" if result.returncode == 0 else f"exit={result.returncode}"
+            print(f"[tap] make {label}: {status}")
+            if result.stdout:
+                preview = "\n".join(result.stdout.splitlines()[:5])
+                print(f"[tap] output preview:\n{preview}")
+        except subprocess.TimeoutExpired:
+            print(f"[tap] make {label}: timeout (non-fatal)")
+        except FileNotFoundError:
+            print(f"[tap] make {label}: make not available (non-fatal)")
 
     # Timing check placeholder
     dur = time.time() - start

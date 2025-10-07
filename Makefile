@@ -1,4 +1,4 @@
-.PHONY: doctor ingest features train sim report
+.PHONY: doctor ingest features train sim report decision uer
 
 doctor:
 	python -m a22a.tools.doctor
@@ -18,3 +18,8 @@ sim:
 report:
 	python -m a22a.reports.weekly
 
+decision:
+	python -m a22a.decision.portfolio
+
+uer:
+	python -m a22a.units.uer
