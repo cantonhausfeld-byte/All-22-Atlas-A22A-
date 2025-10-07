@@ -17,3 +17,7 @@
 - `make train` metrics (Brier/LogLoss/ECE)
 - `make sim` sample distributions
 
+## A22A — PR Checklist (add Phases 9–10)
+- [ ] Phase 9 — Coaching adaptation: agg_index + CIs; monotonic sanity; artifact present
+- [ ] Phase 10 — Dynamic context: incremental features under latency budget; partial-sim package; artifact present
+
