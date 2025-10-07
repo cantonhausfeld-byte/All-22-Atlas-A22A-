@@ -34,3 +34,14 @@ strategy:
 context:
   update_latency_budget_s: 0.5
   partial_sim_max_ms: 200
+health:
+  recency_half_life_weeks: 8
+  min_events: 50
+  frailty: true
+roster:
+  min_snaps_for_starter: 200
+  fallback_by_position:
+    WR: ["WR4", "TE2", "RB3"]
+    RB: ["RB2", "WR4", "TE2"]
+    CB: ["CB4", "S3"]
+  qb_replacement_penalty: 0.7

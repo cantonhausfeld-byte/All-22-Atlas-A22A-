@@ -115,16 +115,26 @@ def run_doctor(ci=False) -> bool:
     print("[modules] units present:", pathlib.Path("a22a/units").exists())
     print("[modules] strategy present:", pathlib.Path("a22a/strategy").exists())
     print("[modules] context present:", pathlib.Path("a22a/context").exists())
+    print("[modules] health present:", pathlib.Path("a22a/health").exists())
+    print("[modules] roster present:", pathlib.Path("a22a/roster").exists())
 
     # Quick runtime taps (best-effort)
-    for label in ("decision", "uer", "strategy", "context"):
+    tap_targets = {
+        "decision": 10,
+        "uer": 10,
+        "strategy": 10,
+        "context": 10,
+        "injuries": 6,
+        "depth": 6,
+    }
+    for label, timeout in tap_targets.items():
         try:
             tap_start = time.time()
             result = subprocess.run(
                 ["make", label],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                timeout=10,
+                timeout=timeout,
                 check=False,
                 text=True,
             )
@@ -135,9 +145,25 @@ def run_doctor(ci=False) -> bool:
                 preview = "\n".join(result.stdout.splitlines()[:5])
                 print(f"[tap] output preview:\n{preview}")
         except subprocess.TimeoutExpired:
-            print(f"[tap] make {label}: timeout (non-fatal)")
+            print(f"[tap] make {label}: timeout after {timeout}s (non-fatal)")
         except FileNotFoundError:
             print(f"[tap] make {label}: make not available (non-fatal)")
+
+    for namespace in ("health", "roster"):
+        pkg_path = pathlib.Path(f"a22a/{namespace}")
+        if not pkg_path.exists():
+            continue
+        offenders = []
+        for path in pkg_path.rglob("*.py"):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for line in text.splitlines():
+                if line.strip().startswith(("import", "from")) and "odds" in line.lower():
+                    offenders.append(str(path))
+                    break
+        if offenders:
+            print(f"[{namespace}] FAIL: odds-related imports detected in {offenders}")
+            return False
+        print(f"[{namespace}] imports OK (no odds modules)")
 
     # Timing check placeholder
     dur = time.time() - start
