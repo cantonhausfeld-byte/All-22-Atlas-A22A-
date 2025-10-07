@@ -13,6 +13,14 @@ make train      # baseline (stub)
 make sim        # simulator (stub)
 ```
 
+### Development workflows
+
+```bash
+pytest -q        # run unit tests
+make context     # refresh drive-level state context artifacts
+make strategy    # update coaching aggressiveness strategy outputs
+```
+
 Design
 	•	Phases 1–16 with acceptance checklists in /docs (or Drive).
 	•	No betting odds in core features/models (odds only for CLV/timing later).
