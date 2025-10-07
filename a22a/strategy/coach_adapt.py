@@ -79,9 +79,13 @@ def _load_table(root: pathlib.Path, name: str) -> pl.DataFrame:
 
 def _polars_to_pandas(df: pl.DataFrame) -> pd.DataFrame:
     try:
-        return df.to_pandas(use_pyarrow_extension_array=True).convert_dtypes()
+        pdf = df.to_pandas(use_pyarrow_extension_array=True)
     except ModuleNotFoundError:
-        return pd.DataFrame(df.to_dicts()).convert_dtypes()
+        pdf = pd.DataFrame(df.to_dicts())
+    try:
+        return pdf.convert_dtypes(dtype_backend="pyarrow")
+    except (KeyError, TypeError, ValueError):
+        return pdf.convert_dtypes()
 
 
 def _coach_lookup(games: pd.DataFrame) -> Dict[Tuple[str, str], str]:

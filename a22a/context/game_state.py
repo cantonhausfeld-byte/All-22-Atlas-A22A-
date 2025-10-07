@@ -73,9 +73,13 @@ def _load_table(root: pathlib.Path, name: str) -> pl.DataFrame:
 
 def _polars_to_pandas(frame: pl.DataFrame) -> pd.DataFrame:
     try:
-        return frame.to_pandas(use_pyarrow_extension_array=True).convert_dtypes()
+        pdf = frame.to_pandas(use_pyarrow_extension_array=True)
     except ModuleNotFoundError:
-        return pd.DataFrame(frame.to_dicts()).convert_dtypes()
+        pdf = pd.DataFrame(frame.to_dicts())
+    try:
+        return pdf.convert_dtypes(dtype_backend="pyarrow")
+    except (KeyError, TypeError, ValueError):
+        return pdf.convert_dtypes()
 
 
 # ---------------------------------------------------------------------------
