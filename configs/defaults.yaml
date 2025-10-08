@@ -81,3 +81,7 @@ market:
 clv:
   use_closing: true
   min_snapshots_per_game: 2
+reports:
+  out_dir: ./reports
+  recent_games: 20
+  show_books: ["pinnacle", "circa", "betmgm", "fanduel", "draftkings"]

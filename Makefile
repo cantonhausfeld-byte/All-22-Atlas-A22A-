@@ -1,4 +1,5 @@
-.PHONY: doctor ingest features train sim report decision portfolio uer strategy context injuries depth impact meta market clv
+.PHONY: doctor ingest features train sim report decision portfolio uer strategy context injuries depth impact meta market clv \
+        report_batch dashboard dashboard_check
 
 doctor:
 	python -m a22a.tools.doctor
@@ -20,6 +21,15 @@ sim:
 
 report:
 	python -m a22a.reports.weekly
+
+report_batch:
+	python -m a22a.reports.compile
+
+dashboard:
+	streamlit run a22a/reports/app.py --server.headless true --server.port 8501
+
+dashboard_check:
+	python -m a22a.reports.smoke
 
 decision:
 	python -m a22a.decision.portfolio
