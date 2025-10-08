@@ -118,6 +118,7 @@ def run_doctor(ci=False) -> bool:
     print("[modules] health present:", pathlib.Path("a22a/health").exists())
     print("[modules] roster present:", pathlib.Path("a22a/roster").exists())
     print("[modules] impact present:", pathlib.Path("a22a/impact").exists())
+    print("[modules] meta present:", pathlib.Path("a22a/meta").exists())
 
     # Quick runtime taps (best-effort)
     tap_targets = {
@@ -128,6 +129,7 @@ def run_doctor(ci=False) -> bool:
         "injuries": 6,
         "depth": 6,
         "impact": 90,
+        "meta": 20,
     }
     for label, timeout in tap_targets.items():
         try:
