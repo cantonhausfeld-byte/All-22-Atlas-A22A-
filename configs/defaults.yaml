@@ -45,3 +45,8 @@ roster:
     RB: ["RB2", "WR4", "TE2"]
     CB: ["CB4", "S3"]
   qb_replacement_penalty: 0.7
+impact:
+  samples_per_player: 200
+  ci_level: 0.90
+  max_games_per_batch: 8
+  seed: 13

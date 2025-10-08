@@ -1,4 +1,4 @@
-.PHONY: doctor ingest features train sim report decision uer strategy context injuries depth
+.PHONY: doctor ingest features train sim report decision uer strategy context injuries depth impact
 
 doctor:
 	python -m a22a.tools.doctor
@@ -35,3 +35,6 @@ injuries:
 
 depth:
 	python -m a22a.roster.depth_logic
+
+impact:
+	python -m a22a.impact.player_value
