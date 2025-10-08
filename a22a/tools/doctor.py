@@ -1,6 +1,8 @@
 import os, sys, time, hashlib, re, pathlib, json, subprocess
 from dataclasses import dataclass
 
+from a22a.reports.sources import reports_out_dir
+
 BLOCKED_TOKENS = [
     "the-odds-api", "SportsgameOdds", "sportsbook", "oddsapi", "odds-api"
 ]
@@ -121,6 +123,19 @@ def run_doctor(ci=False) -> bool:
     print("[modules] meta present:", pathlib.Path("a22a/meta").exists())
     print("[modules] portfolio present:", pathlib.Path("a22a/portfolio").exists())
     print("[modules] market present:", pathlib.Path("a22a/market").exists())
+    print("[modules] reports present:", pathlib.Path("a22a/reports").exists())
+
+    try:
+        reports_dir = reports_out_dir()
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        writable = os.access(reports_dir, os.W_OK)
+        print(f"[reports] out_dir={reports_dir} writable={writable}")
+        if not writable:
+            print("[reports] FAIL: reports directory not writable")
+            return False
+    except Exception as exc:
+        print(f"[reports] FAIL: unable to prepare reports directory -> {exc}")
+        return False
 
     # Quick runtime taps (best-effort)
     tap_targets = {
