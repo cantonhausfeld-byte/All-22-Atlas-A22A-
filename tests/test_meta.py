@@ -40,16 +40,18 @@ def test_meta_pipeline_outputs():
     prob_path, report_path = _run_meta_module()
 
     final_df = pd.read_parquet(prob_path)
-    assert list(final_df.columns) == ["game_id", "p_home", "p_away"]
+    assert list(final_df.columns) == ["game_id", "p_home", "p_away", "p_calibrated"]
     assert final_df["p_home"].between(0, 1).all()
     assert final_df["p_away"].between(0, 1).all()
     assert np.allclose(final_df["p_home"] + final_df["p_away"], 1.0, atol=1e-6)
+    assert np.allclose(final_df["p_home"], final_df["p_calibrated"], atol=1e-12)
 
     report = json.loads(report_path.read_text())
-    for key in ["ece", "brier", "log_loss", "calibration_method", "conformal"]:
+    for key in ["ece", "brier", "log_loss", "calibration_method", "conformal", "stacker", "dataset"]:
         assert key in report
     assert "binary" in report["conformal"]
     assert "nominal" in report["conformal"]["binary"]
+    assert "empirical" in report["conformal"]["binary"]
 
 
 def test_calibration_metrics_sanity():
