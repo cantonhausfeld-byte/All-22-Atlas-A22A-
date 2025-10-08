@@ -13,14 +13,23 @@ def split_conformal_binary(
     y: pd.Series,
     coverage: float = 0.9,
 ) -> dict:
-    """Return a simple split-conformal radius for binary probabilities."""
+    """Return a split-conformal radius for binary probabilities."""
 
     if not 0 < coverage < 1:
         raise ValueError("coverage must be between 0 and 1")
 
-    residuals = np.abs(y.to_numpy(dtype=float) - p.to_numpy(dtype=float))
-    quantile = float(np.quantile(residuals, coverage))
-    return {"q": quantile, "coverage": float(coverage)}
+    probs = p.to_numpy(dtype=float)
+    labels = y.to_numpy(dtype=float)
+    mask = np.isfinite(probs) & np.isfinite(labels)
+    residuals = np.abs(labels[mask] - probs[mask])
+    if residuals.size == 0:
+        raise ValueError("cannot compute conformal radius with empty residuals")
+    sorted_res = np.sort(residuals)
+    n = sorted_res.size
+    rank = int(np.ceil(coverage * (n + 1)))
+    idx = min(max(rank - 1, 0), n - 1)
+    quantile = float(sorted_res[idx])
+    return {"q": quantile, "coverage": float(coverage), "n_calibration": int(n)}
 
 
 def split_conformal_quantiles(
