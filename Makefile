@@ -1,7 +1,10 @@
-.PHONY: doctor ingest features train sim report decision uer strategy context injuries depth impact
+.PHONY: doctor ingest features train sim report decision uer strategy context injuries depth impact meta
 
 doctor:
 	python -m a22a.tools.doctor
+
+meta:
+	python -m a22a.meta.run
 
 ingest:
 	python -m a22a.data.ingest
