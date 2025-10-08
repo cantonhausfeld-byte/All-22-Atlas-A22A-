@@ -69,3 +69,15 @@ conformal:
   coverage: 0.90
   margin_quantiles: [0.05, 0.95]
   total_quantiles: [0.05, 0.95]
+market:
+  providers:
+    theodds: true
+    sgo: true
+  leagues: ["NFL"]
+  markets: ["h2h", "spreads", "totals"]
+  books_allowlist: ["pinnacle", "circa", "betmgm", "fanduel", "draftkings"]
+  poll_window_hours: 168
+  rate_limit_per_min: 30
+clv:
+  use_closing: true
+  min_snapshots_per_game: 2
