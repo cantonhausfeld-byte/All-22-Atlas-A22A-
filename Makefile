@@ -1,4 +1,4 @@
-.PHONY: doctor ingest features train sim report decision portfolio uer strategy context injuries depth impact meta
+.PHONY: doctor ingest features train sim report decision portfolio uer strategy context injuries depth impact meta market clv
 
 doctor:
 	python -m a22a.tools.doctor
@@ -44,3 +44,9 @@ depth:
 
 impact:
 	python -m a22a.impact.player_value
+
+market:
+	python -m a22a.market.ingest
+
+clv:
+	python -m a22a.market.clv

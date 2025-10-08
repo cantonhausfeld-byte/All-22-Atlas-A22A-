@@ -120,6 +120,7 @@ def run_doctor(ci=False) -> bool:
     print("[modules] impact present:", pathlib.Path("a22a/impact").exists())
     print("[modules] meta present:", pathlib.Path("a22a/meta").exists())
     print("[modules] portfolio present:", pathlib.Path("a22a/portfolio").exists())
+    print("[modules] market present:", pathlib.Path("a22a/market").exists())
 
     # Quick runtime taps (best-effort)
     tap_targets = {
@@ -132,6 +133,8 @@ def run_doctor(ci=False) -> bool:
         "depth": 6,
         "impact": 90,
         "meta": 20,
+        "market": 12,
+        "clv": 12,
     }
     for label, timeout in tap_targets.items():
         try:
