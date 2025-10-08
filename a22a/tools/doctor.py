@@ -119,10 +119,12 @@ def run_doctor(ci=False) -> bool:
     print("[modules] roster present:", pathlib.Path("a22a/roster").exists())
     print("[modules] impact present:", pathlib.Path("a22a/impact").exists())
     print("[modules] meta present:", pathlib.Path("a22a/meta").exists())
+    print("[modules] portfolio present:", pathlib.Path("a22a/portfolio").exists())
 
     # Quick runtime taps (best-effort)
     tap_targets = {
         "decision": 10,
+        "portfolio": 10,
         "uer": 10,
         "strategy": 10,
         "context": 10,
