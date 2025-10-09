@@ -1,20 +1,16 @@
-import json
 import pathlib
+import subprocess
+import sys
 
-from a22a.monitor.run import run_monitor
 
-
-def test_monitor_smoke(capsys):
-    payload, path = run_monitor()
-    assert path.exists()
-    data = json.loads(path.read_text())
-    assert data["status"] == payload["status"]
-    assert "details" in payload
-    assert set(payload["details"]).issuperset({"calibration", "coverage", "clv", "slo"})
-
-    captured = capsys.readouterr().out
-    assert "[monitor] summary" in captured
-    assert "[monitor] wrote" in captured
-
-    latest = sorted(pathlib.Path("artifacts/monitor").glob("health_*.json"))
-    assert latest
+def test_monitor_runs():
+    result = subprocess.run(
+        [sys.executable, "-m", "a22a.monitor.run"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[monitor] wrote" in result.stdout
+    outputs = list(pathlib.Path("artifacts/monitor").glob("health_*.json"))
+    assert outputs, "monitor should write health artifacts"

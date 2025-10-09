@@ -1,78 +1,86 @@
-"""Alerting adapters for the monitoring subsystem."""
+"""Bootstrap alert adapters used by the monitoring stub."""
 
 from __future__ import annotations
 
 import json
 import os
+import urllib.request
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 
 @dataclass(slots=True)
-class AlertChannelConfig:
-    """Minimal configuration required to emit alerts."""
+class AlertPayload:
+    title: str
+    status: str
+    body: dict[str, Any]
 
-    slack_webhook_env: str | None = None
-    email_from: str | None = None
-    email_to: Iterable[str] | None = None
+    def as_json(self) -> str:
+        return json.dumps(
+            {
+                "title": self.title,
+                "status": self.status,
+                "body": self.body,
+            },
+            indent=2,
+            sort_keys=True,
+        )
 
 
 class AlertsClient:
-    """Fan-out router for monitoring alerts.
+    """Small helper that performs dry-run alert fan-out when secrets are missing."""
 
-    The bootstrap implementation prints rich messages instead of performing
-    network calls. Secrets remain environment-only and we log when falling back
-    to a dry-run so CI visibility remains high.
-    """
-
-    def __init__(self, config: dict[str, Any] | None, channels: Iterable[str] | None):
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         cfg = config or {}
-        self.channels = tuple(channels or ())
-        self.channel_config = AlertChannelConfig(
-            slack_webhook_env=cfg.get("slack_webhook_env"),
-            email_from=cfg.get("email_from"),
-            email_to=tuple(cfg.get("email_to", [])),
+        self.slack_env = cfg.get("slack_webhook_env", "SLACK_WEBHOOK_URL")
+        self.email_from = cfg.get("email_from", "")
+        self.email_to = tuple(cfg.get("email_to", []))
+
+    def send(self, channel: str, payload: AlertPayload) -> str:
+        if channel == "slack":
+            return self._send_slack(payload)
+        if channel == "email":
+            return self._send_email(payload)
+        message = f"[alerts] unsupported channel '{channel}'"
+        print(message)
+        return message
+
+    # Internal helpers -------------------------------------------------------------
+
+    def _send_slack(self, payload: AlertPayload) -> str:
+        webhook = os.getenv(self.slack_env)
+        if not webhook:
+            message = f"[alerts] slack dry-run — missing env '{self.slack_env}'"
+            print(message)
+            return message
+
+        data = payload.as_json().encode("utf-8")
+        request = urllib.request.Request(
+            webhook,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
         )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:  # pragma: no cover - network
+                message = f"[alerts] slack {response.status}"
+        except Exception as exc:  # pragma: no cover - network
+            message = f"[alerts] slack error: {exc}"
+        print(message)
+        return message
 
-    def notify(self, payload: dict[str, Any]) -> None:
-        message = json.dumps(payload, indent=2, sort_keys=True)
-        for channel in self.channels:
-            if channel == "slack":
-                self._emit_slack(message)
-            elif channel == "email":
-                self._emit_email(message)
-            else:
-                print(f"[alerts] unsupported channel '{channel}' — skipping")
+    def _send_email(self, payload: AlertPayload) -> str:
+        if not self.email_from or not self.email_to:
+            message = "[alerts] email dry-run — sender or recipients unset"
+            print(message)
+            return message
 
-    # Internal helpers -----------------------------------------------------------------
-
-    def _emit_slack(self, message: str) -> None:
-        env_name = self.channel_config.slack_webhook_env
-        webhook = os.getenv(env_name or "", "") if env_name else ""
-        if webhook:
-            print(
-                f"[alerts] slack webhook present in env '{env_name}' — bootstrap mode, message not sent"
-            )
-        else:
-            env_hint = env_name or "SLACK_WEBHOOK_URL"
-            print(f"[alerts] slack dry-run — missing env '{env_hint}'\n{message}")
-
-    def _emit_email(self, message: str) -> None:
-        sender = self.channel_config.email_from or ""
-        recipients = list(self.channel_config.email_to or ())
-        if sender and recipients:
-            print(
-                "[alerts] email config present — bootstrap mode, message not sent",
-                f"from={sender}",
-                f"to={recipients}",
-            )
-        else:
-            print(
-                "[alerts] email dry-run — missing sender/recipients",
-                f"from={sender or '<unset>'}",
-                f"to={recipients}",
-                message,
-            )
+        message = (
+            "[alerts] email dry-run — message not sent\\n"
+            f"from={self.email_from} to={list(self.email_to)}\\n{payload.as_json()}"
+        )
+        print(message)
+        return message
 
 
-__all__ = ["AlertsClient", "AlertChannelConfig"]
+__all__ = ["AlertPayload", "AlertsClient"]
