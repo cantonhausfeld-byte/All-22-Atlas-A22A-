@@ -62,10 +62,10 @@ clv:
 	python -m a22a.market.clv
 
 monitor:
-        python -m a22a.monitor.run
+	python -m a22a.monitor.run
 
 backtest:
-        python -m a22a.backtest.run
+	python -m a22a.backtest.run
 
 docker_build:
 	docker build -t a22a .
