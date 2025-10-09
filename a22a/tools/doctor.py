@@ -213,6 +213,12 @@ def run_doctor(ci=False) -> bool:
             return False
         print(f"[{namespace}] imports OK (no odds modules)")
 
+    schedule_workflow = pathlib.Path(".github/workflows/schedule.yml")
+    if schedule_workflow.exists():
+        print("[infra] schedule.yml ready for cron runs; add A22A_API_TOKEN/A22A_MARKET_KEY secrets to enable live mode")
+    else:
+        print("[infra] schedule.yml missing (expected after Phase 20 bootstrap)")
+
     # Timing check placeholder
     dur = time.time() - start
     print(f"[doctor] completed in {dur:.2f}s")

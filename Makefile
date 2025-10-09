@@ -1,5 +1,5 @@
 .PHONY: doctor ingest features train sim report decision portfolio uer strategy context injuries depth impact meta market clv \
-        report_batch dashboard dashboard_check monitor backtest
+        report_batch dashboard dashboard_check monitor backtest docker_build docker_run_dashboard
 
 doctor:
 	python -m a22a.tools.doctor
@@ -62,7 +62,13 @@ clv:
 	python -m a22a.market.clv
 
 monitor:
-	python -m a22a.monitor.run
+        python -m a22a.monitor.run
 
 backtest:
-	python -m a22a.backtest.run
+        python -m a22a.backtest.run
+
+docker_build:
+	docker build -t a22a .
+
+docker_run_dashboard:
+	docker run -p 8501:8501 -v $$PWD:/app a22a make dashboard
