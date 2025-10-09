@@ -20,6 +20,20 @@ CREATE TABLE IF NOT EXISTS metrics (
 )
 """
 
+BACKTEST_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS backtest_metrics (
+    date DATE,
+    season INTEGER,
+    week INTEGER,
+    n_bets INTEGER,
+    roi DOUBLE,
+    win_pct DOUBLE,
+    ece DOUBLE,
+    clv_bps_mean DOUBLE,
+    bankroll DOUBLE
+)
+"""
+
 
 class MetricsStore:
     """Lightweight wrapper for persisting metrics to DuckDB."""
@@ -29,6 +43,7 @@ class MetricsStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.execute(SCHEMA_SQL)
+            conn.execute(BACKTEST_SCHEMA_SQL)
 
     def _connect(self) -> duckdb.DuckDBPyConnection:
         return duckdb.connect(str(self.path))
@@ -55,6 +70,37 @@ class MetricsStore:
             conn.executemany(
                 "INSERT INTO metrics VALUES (?, ?, ?, ?, ?, ?)",
                 rows,
+            )
+
+    def append_backtest_rows(self, rows: Iterable[dict[str, Any]]) -> None:
+        """Persist weekly backtest metrics into the structured table."""
+
+        prepared: list[tuple[Any, ...]] = []
+        for row in rows:
+            prepared.append(
+                (
+                    row.get("date"),
+                    int(row.get("season", 0)),
+                    int(row.get("week", 0)),
+                    int(row.get("n_bets", 0)),
+                    float(row.get("roi", 0.0)),
+                    float(row.get("win_pct", 0.0)),
+                    float(row.get("ece", 0.0)),
+                    float(row.get("clv_bps_mean", 0.0)),
+                    float(row.get("bankroll", 0.0)),
+                )
+            )
+
+        if not prepared:
+            return
+
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO backtest_metrics
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                prepared,
             )
 
     # Read API ------------------------------------------------------------------------
