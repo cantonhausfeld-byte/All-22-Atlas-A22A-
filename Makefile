@@ -1,5 +1,5 @@
 .PHONY: doctor ingest features train sim report decision portfolio uer strategy context injuries depth impact meta market clv \
-        report_batch dashboard dashboard_check
+        report_batch dashboard dashboard_check monitor backtest
 
 doctor:
 	python -m a22a.tools.doctor
@@ -60,3 +60,9 @@ market:
 
 clv:
 	python -m a22a.market.clv
+
+monitor:
+	python -m a22a.monitor.run
+
+backtest:
+	python -m a22a.backtest.run
