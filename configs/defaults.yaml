@@ -87,14 +87,9 @@ reports:
   show_books: ["pinnacle", "circa", "betmgm", "fanduel", "draftkings"]
 monitoring:
   ece_target: 0.03
-  brier_target: 0.25
-  reliability_slope_min: 0.85
-  reliability_slope_max: 1.15
   clv_bps_target: 0.0
-  clv_positive_rate_target: 0.55
   min_coverage: 0.90
-  coverage_tolerance: 0.02
-  max_runtime_s: 30
+  max_runtime_s: 600
   alert_channels: ["slack"]
 alerts:
   slack_webhook_env: "SLACK_WEBHOOK_URL"

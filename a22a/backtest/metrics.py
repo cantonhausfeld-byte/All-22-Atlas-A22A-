@@ -86,6 +86,18 @@ def sharpe_like(returns: Sequence[float]) -> float:
     return mean_return / std_dev
 
 
+def herfindahl_index(weights: Sequence[float]) -> float:
+    """Compute the Herfindahl-Hirschman Index for a collection of weights."""
+
+    if not weights:
+        return 0.0
+    total = sum(abs(w) for w in weights)
+    if total == 0:
+        return 0.0
+    normalised = [abs(w) / total for w in weights if total]
+    return sum(w ** 2 for w in normalised)
+
+
 __all__ = [
     "roi",
     "win_rate",
@@ -93,4 +105,5 @@ __all__ = [
     "clv_basis_points",
     "max_drawdown",
     "sharpe_like",
+    "herfindahl_index",
 ]
