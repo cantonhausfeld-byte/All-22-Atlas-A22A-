@@ -54,6 +54,18 @@ def check_env_only_secrets():
             offenders.append(str(p))
     return offenders
 
+
+def check_alert_secrets():
+    offenders = []
+    keywords = ("https://hooks.slack.com", "xoxb-", "smtp://", "sendgrid")
+    for p in pathlib.Path("a22a").rglob("*.py"):
+        if p.name == "doctor.py" and "tools" in p.parts:
+            continue
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        if any(keyword in text for keyword in keywords):
+            offenders.append(str(p))
+    return offenders
+
 def run_doctor(ci=False) -> bool:
     start = time.time()
     print("A22A Doctor — starting …")
@@ -77,6 +89,13 @@ def run_doctor(ci=False) -> bool:
         return False
     else:
         print("[secrets] OK: no hardcoded API keys detected")
+
+    alert_offenders = check_alert_secrets()
+    if alert_offenders:
+        print("[alerts] FAIL: suspected hardcoded alert secrets in:", alert_offenders)
+        return False
+    else:
+        print("[alerts] OK: alert integrations reference env-only secrets")
 
     # Static scan for odds leakage in core modules
     odds_hits = static_scan_for_odds("a22a")
@@ -124,6 +143,9 @@ def run_doctor(ci=False) -> bool:
     print("[modules] portfolio present:", pathlib.Path("a22a/portfolio").exists())
     print("[modules] market present:", pathlib.Path("a22a/market").exists())
     print("[modules] reports present:", pathlib.Path("a22a/reports").exists())
+    print("[modules] monitor present:", pathlib.Path("a22a/monitor").exists())
+    print("[modules] backtest present:", pathlib.Path("a22a/backtest").exists())
+    print("[modules] store present:", pathlib.Path("a22a/store").exists())
 
     try:
         reports_dir = reports_out_dir()
@@ -150,6 +172,8 @@ def run_doctor(ci=False) -> bool:
         "meta": 20,
         "market": 12,
         "clv": 12,
+        "monitor": 10,
+        "backtest": 15,
     }
     for label, timeout in tap_targets.items():
         try:

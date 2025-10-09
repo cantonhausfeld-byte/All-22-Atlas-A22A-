@@ -85,3 +85,20 @@ reports:
   out_dir: ./reports
   recent_games: 20
   show_books: ["pinnacle", "circa", "betmgm", "fanduel", "draftkings"]
+monitoring:
+  ece_target: 0.03
+  clv_bps_target: 0.0
+  min_coverage: 0.90
+  max_runtime_s: 600
+  alert_channels: ["slack"]
+alerts:
+  slack_webhook_env: "SLACK_WEBHOOK_URL"
+  email_from: ""
+  email_to: []
+backtest:
+  seasons: [2022, 2023, 2024]
+  weeks: "all"
+  bankroll_start: 100000
+  use_conformal: true
+store:
+  duckdb_path: "./artifacts/store/a22a_metrics.duckdb"
