@@ -1,50 +1,113 @@
-name: Scheduled Pipelines
-
-# Weekly automation for Phase 20. Uses offline-friendly fallbacks unless
-# the optional secrets below are populated for live integrations.
-# Pipeline order: ingest → features → train → sim → meta → portfolio → market → clv → report_batch → monitor
+name: A22A Scheduled Runs
 
 on:
   schedule:
-    - cron: '0 9 * * MON'
+    # Nightly quick health (03:30 ET ≈ 07:30 UTC)
+    - cron: "30 7 * * *"
+    # Post-week full pipeline (Mondays 10:00 ET ≈ 14:00 UTC)
+    - cron: "0 14 * * 1"
   workflow_dispatch:
 
+concurrency:
+  group: a22a-scheduled-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  weekly-pipeline:
-    name: Weekly offline pipeline
+  setup:
+    name: Setup Python & Cache
     runs-on: ubuntu-latest
-    env:
-      PYTHONUNBUFFERED: '1'
-      PYTHONHASHSEED: '1'
-      TZ: 'UTC'
-      A22A_LIVE_MODE: '0'
+    outputs:
+      pycache-key: ${{ steps.cache-pip.outputs.cache-primary-key }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - name: Install project in editable mode
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e .
-      - name: Run make doctor
+          python-version: "3.11"
+      - id: cache-pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-py311-${{ hashFiles('pyproject.toml') }}
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e .
+
+  nightly_health:
+    name: Nightly Quick Health
+    needs: setup
+    if: github.event.schedule == '30 7 * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e .
+      - name: Doctor
         run: make doctor
-      - name: Run scheduled pipeline
-        run: bash scripts/run_pipeline.sh
-        env:
-          A22A_API_TOKEN: ${{ secrets.A22A_API_TOKEN }}
-          A22A_MARKET_KEY: ${{ secrets.A22A_MARKET_KEY }}
-          STREAMLIT_SERVER_HEADLESS: 'true'
-      - name: Upload reports and artifacts
+      - name: Batch Report (offline-safe)
+        run: make report_batch
+      - name: Monitor (offline-safe)
+        run: make monitor
+      - name: Upload Reports
         uses: actions/upload-artifact@v4
         with:
-          name: scheduled-pipeline-artifacts
-          if-no-files-found: warn
-          retention-days: 14
+          name: nightly-reports
           path: |
-            reports
-            artifacts/monitor/health_*.json
-            artifacts/backtest/summary_*.json
-            artifacts/store/a22a_metrics.duckdb
+            reports/**
+            artifacts/monitor/**
+    # To enable live market/weather on nightly, uncomment and add repo secrets:
+    # env:
+    #   ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+    #   SPORTSGAMEODDS_API_KEY: ${{ secrets.SPORTSGAMEODDS_API_KEY }}
+    #   WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
+
+  weekly_full:
+    name: Weekly Full Pipeline
+    needs: setup
+    if: github.event.schedule == '0 14 * * 1' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e .
+      - name: Doctor
+        run: make doctor
+      - name: Run Full Pipeline (offline-safe)
+        run: |
+          set -e
+          make ingest
+          make features
+          make train
+          make uer
+          make strategy
+          make context
+          make injuries
+          make depth
+          make impact
+          make sim
+          make meta
+          make portfolio
+          make market
+          make clv
+          make report_batch
+          make monitor
+      - name: Upload Weekly Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-artifacts
+          path: |
+            artifacts/**
+            reports/**
+    # To enable live providers on weekly, uncomment and set secrets in repo:
+    # env:
+    #   ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+    #   SPORTSGAMEODDS_API_KEY: ${{ secrets.SPORTSGAMEODDS_API_KEY }}
+    #   WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
+    #   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+# Tip: if you later want a post-game Sunday night run, add another cron (e.g., 0 5 * * 1 for 01:00 ET Monday).
