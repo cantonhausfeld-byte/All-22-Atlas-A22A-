@@ -1,401 +1,438 @@
-"""Monitoring orchestrator for A22A health checks."""
+"""Phase 18 monitoring implementation with metric aggregation and alerting."""
 
 from __future__ import annotations
 
-import datetime as _dt
+import hashlib
 import json
 import math
 import pathlib
 import time
 from dataclasses import dataclass
-from typing import Any, Iterable, Tuple
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-import numpy as np
 import pandas as pd
 import yaml
 
-from .alerts import AlertsClient
+from a22a.metrics.calibration import brier_score as compute_brier
+from a22a.metrics.calibration import ece as compute_ece
+from a22a.reports.sources import (
+    load_latest_json,
+    load_latest_parquet_or_csv,
+    reports_out_dir,
+)
 
-DEFAULT_CONFIG_PATH = "configs/defaults.yaml"
+from .alerts import AlertPayload, AlertsClient, send_slack
+
+DEFAULT_CONFIG_PATH = pathlib.Path("configs/defaults.yaml")
 ARTIFACT_DIR = pathlib.Path("artifacts/monitor")
-META_DIR = pathlib.Path("artifacts/meta")
-PORTFOLIO_DIR = pathlib.Path("artifacts/portfolio")
-MARKET_DIR = pathlib.Path("artifacts/market")
+BACKTEST_DIR = pathlib.Path("artifacts/backtest")
+DOCTOR_LOG = pathlib.Path("artifacts/logs/doctor_runs.jsonl")
+HEALTH_PREFIX = "health_"
+
+Status = str
 
 
 @dataclass(slots=True)
-class MetricRecord:
+class MetricCheck:
     name: str
+    status: Status
     value: Any
-    target: Any | None
-    status: str
+    target: Any | None = None
+    reason: str | None = None
+    extra: dict[str, Any] | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "status": self.status,
+            "value": self.value,
+        }
+        if self.target is not None:
+            payload["target"] = self.target
+        if self.reason:
+            payload["reason"] = self.reason
+        if self.extra:
+            payload.update(self.extra)
+        return payload
 
 
-STATUS_ORDER = {"ok": 0, "warn": 1, "fail": 2}
-
-
-def _utcnow() -> _dt.datetime:
-    return _dt.datetime.now(tz=_dt.timezone.utc)
-
-
-def _load_config(path: str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
-    cfg_path = pathlib.Path(path)
-    if not cfg_path.exists():
+def _load_config(path: pathlib.Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
+    if not path.exists():
         return {}
-    with cfg_path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle) or {}
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
-def _latest_path(directory: pathlib.Path, pattern: str) -> pathlib.Path | None:
-    if not directory.exists():
-        return None
-    candidates = sorted(directory.glob(pattern))
-    if not candidates:
-        return None
-    return candidates[-1]
-
-
-def _load_json(path: pathlib.Path | None) -> dict[str, Any] | None:
-    if path is None or not path.exists():
+def _load_reports_summary() -> dict[str, Any] | None:
+    summary_path = reports_out_dir() / "summary.json"
+    if not summary_path.exists():
         return None
     try:
-        return json.loads(path.read_text())
+        return json.loads(summary_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return None
 
 
-def _reliability_slope(bins: Iterable[dict[str, Any]]) -> float | None:
-    df = pd.DataFrame(bins)
-    if df.empty:
+def _latest_backtest_summary() -> dict[str, Any] | None:
+    if not BACKTEST_DIR.exists():
         return None
-    if "confidence" not in df.columns or "accuracy" not in df.columns:
-        return None
-    if df["confidence"].nunique(dropna=True) < 2:
-        return None
-    x = df["confidence"].astype(float).to_numpy()
-    y = df["accuracy"].astype(float).to_numpy()
-    weights = df.get("count")
-    try:
-        if weights is not None:
-            w = np.asarray(weights, dtype=float)
-            slope = np.polyfit(x, y, 1, w=w)[0]
-        else:
-            slope = np.polyfit(x, y, 1)[0]
-    except Exception:
-        return None
-    return float(slope)
+    candidates = sorted(BACKTEST_DIR.glob("summary_*.json"))
+    for path in reversed(candidates):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+    return None
 
 
-def _status_from_values(*statuses: str) -> str:
-    if not statuses:
-        return "ok"
-    return max(statuses, key=lambda s: STATUS_ORDER.get(s, 1))
+def _load_meta_probabilities() -> pd.DataFrame | None:
+    df, _ = load_latest_parquet_or_csv("artifacts/meta/final_probs_*.parquet")
+    return df
 
 
-def _compare_lower(value: float | None, target: float, warn_ratio: float = 1.25) -> str:
-    if value is None or math.isnan(value):
-        return "warn"
-    if value <= target:
-        return "ok"
-    if value <= target * warn_ratio:
-        return "warn"
-    return "fail"
+def _load_calibration_report() -> dict[str, Any] | None:
+    report, _ = load_latest_json("artifacts/meta/calibration_report_*.json")
+    if isinstance(report, dict):
+        return report
+    return None
 
 
-def _compare_range(value: float | None, lower: float, upper: float, slack: float = 0.1) -> str:
-    if value is None or math.isnan(value):
-        return "warn"
-    if lower <= value <= upper:
-        return "ok"
-    if (lower - slack) <= value <= (upper + slack):
-        return "warn"
-    return "fail"
+def _load_clv_snapshot() -> pd.DataFrame | None:
+    df, _ = load_latest_parquet_or_csv("artifacts/market/clv_*.parquet")
+    return df
 
 
-def _load_calibration_report() -> tuple[dict[str, Any] | None, pathlib.Path | None]:
-    path = _latest_path(META_DIR, "calibration_report_*.json")
-    return _load_json(path), path
+def _load_portfolio_snapshot() -> pd.DataFrame | None:
+    df, _ = load_latest_parquet_or_csv("artifacts/portfolio/picks_week_*.parquet")
+    return df
 
 
-def _load_portfolio_picks() -> tuple[pd.DataFrame, pathlib.Path | None]:
-    picks_path = _latest_path(PORTFOLIO_DIR, "picks_week_*.parquet")
-    if picks_path is None:
-        picks_path = _latest_path(PORTFOLIO_DIR, "picks_week_*.csv")
-    if picks_path is None:
-        return pd.DataFrame(), None
-    try:
-        if picks_path.suffix == ".csv":
-            df = pd.read_csv(picks_path)
-        else:
-            df = pd.read_parquet(picks_path)
-    except Exception:
-        return pd.DataFrame(), picks_path
-    return df, picks_path
+def _synthetic_outcomes(probs: pd.Series) -> pd.Series:
+    outcomes: List[int] = []
+    for idx, value in probs.fillna(0.5).clip(0.0, 1.0).items():
+        key = f"{idx}-{float(value):.6f}".encode("utf-8")
+        hashed = hashlib.blake2s(key, digest_size=8).digest()
+        draw = int.from_bytes(hashed, "big") / float(1 << 64)
+        outcomes.append(1 if draw < float(value) else 0)
+    return pd.Series(outcomes, index=probs.index)
 
 
-def _load_clv_table() -> tuple[pd.DataFrame, pathlib.Path | None]:
-    clv_path = _latest_path(MARKET_DIR, "clv_*.parquet")
-    if clv_path is None:
-        return pd.DataFrame(), None
-    try:
-        df = pd.read_parquet(clv_path)
-    except Exception:
-        return pd.DataFrame(), clv_path
-    return df, clv_path
+def _calibration_metrics(
+    calibration_report: dict[str, Any] | None,
+    summary: dict[str, Any] | None,
+    meta_df: pd.DataFrame | None,
+    *,
+    bins: int = 10,
+) -> dict[str, Any]:
+    source = None
+    ece_val: Optional[float] = None
+    brier_val: Optional[float] = None
 
+    if calibration_report:
+        ece_val = float(calibration_report.get("ece", math.nan))
+        brier_val = float(calibration_report.get("brier", math.nan))
+        source = "calibration_report"
 
-def _calibration_details(report: dict[str, Any] | None, cfg: dict[str, Any]) -> dict[str, Any]:
-    ece_val = float(report.get("ece")) if report and "ece" in report else None
-    brier_val = float(report.get("brier")) if report and "brier" in report else None
-    slope_val = _reliability_slope(report.get("reliability_bins", [])) if report else None
+    if (ece_val is None or math.isnan(ece_val)) and summary:
+        calib = summary.get("calibration") or {}
+        ece_val = float(calib.get("ece", math.nan))
+        brier_val = float(calib.get("brier", math.nan))
+        source = source or "reports_summary"
 
-    ece_target = float(cfg.get("ece_target", 0.03) or 0.03)
-    brier_target = float(cfg.get("brier_target", 0.25) or 0.25)
-    slope_min = float(cfg.get("reliability_slope_min", 0.85) or 0.85)
-    slope_max = float(cfg.get("reliability_slope_max", 1.15) or 1.15)
+    if (ece_val is None or math.isnan(ece_val)) and meta_df is not None and not meta_df.empty:
+        probs = pd.to_numeric(meta_df.get("p_home"), errors="coerce").fillna(0.5).clip(0.0, 1.0)
+        outcomes = _synthetic_outcomes(probs)
+        try:
+            ece_val = float(compute_ece(probs, outcomes, bins=bins))
+            brier_val = float(compute_brier(probs, outcomes))
+            source = source or "synthetic"
+        except Exception:
+            ece_val = math.nan
+            brier_val = math.nan
 
-    ece_status = _compare_lower(ece_val, ece_target)
-    brier_status = _compare_lower(brier_val, brier_target)
-    slope_status = _compare_range(slope_val, slope_min, slope_max)
-
-    metrics = {
-        "ece": {"value": ece_val, "target": ece_target, "status": ece_status},
-        "brier": {"value": brier_val, "target": brier_target, "status": brier_status},
-        "reliability_slope": {
-            "value": slope_val,
-            "target": {"min": slope_min, "max": slope_max},
-            "status": slope_status,
-        },
+    return {
+        "ece": ece_val,
+        "brier": brier_val,
+        "source": source or "unknown",
+        "samples": int(meta_df.shape[0]) if isinstance(meta_df, pd.DataFrame) else None,
     }
 
-    status = _status_from_values(ece_status, brier_status, slope_status)
-    detail = {"status": status, "metrics": metrics}
-    if report is None:
-        detail["message"] = "calibration report not found"
-    return detail
+
+def _coverage_metrics(
+    calibration_report: dict[str, Any] | None,
+    summary: dict[str, Any] | None,
+    monitoring_cfg: dict[str, Any],
+    meta_df: pd.DataFrame | None,
+) -> dict[str, Any]:
+    target = float(monitoring_cfg.get("min_coverage", 0.9))
+    empirical: Optional[float] = None
+    nominal: Optional[float] = None
+    source = None
+
+    binary = (
+        (calibration_report or {})
+        .get("conformal", {})
+        .get("binary", {})
+        if calibration_report
+        else {}
+    )
+    empirical = float(binary.get("empirical", math.nan)) if binary else None
+    nominal = float(binary.get("nominal", math.nan)) if binary else None
+    if binary:
+        source = "calibration_report"
+
+    if (empirical is None or math.isnan(empirical)) and summary:
+        cal = summary.get("calibration", {})
+        conf = cal.get("conformal", {}) if isinstance(cal, dict) else {}
+        binary = conf.get("binary", {}) if isinstance(conf, dict) else {}
+        if binary:
+            empirical = float(binary.get("empirical", math.nan))
+            nominal = float(binary.get("nominal", math.nan))
+            source = source or "reports_summary"
+
+    if (empirical is None or math.isnan(empirical)) and meta_df is not None and not meta_df.empty:
+        probs = pd.to_numeric(meta_df.get("p_home"), errors="coerce").fillna(0.5).clip(0.0, 1.0)
+        outcomes = _synthetic_outcomes(probs)
+        residuals = (probs - outcomes).abs()
+        radius = float(monitoring_cfg.get("synthetic_radius", 0.15))
+        empirical = float((residuals <= radius).mean())
+        nominal = float(1.0 - radius)
+        source = source or "synthetic"
+
+    return {
+        "target": target,
+        "empirical": empirical,
+        "nominal": nominal,
+        "source": source or "unknown",
+    }
 
 
-def _coverage_details(report: dict[str, Any] | None, cfg: dict[str, Any]) -> dict[str, Any]:
-    nominal = float(cfg.get("min_coverage", 0.9) or 0.9)
-    tolerance = float(cfg.get("coverage_tolerance", 0.02) or 0.02)
-    empirical = None
-    if report:
-        binary = (report.get("conformal") or {}).get("binary") or {}
-        value = binary.get("empirical")
-        if value is not None:
-            empirical = float(value)
+def _clv_metrics(clv_df: pd.DataFrame | None) -> dict[str, Any]:
+    if clv_df is None or clv_df.empty:
+        return {
+            "status": "missing",
+            "samples": 0,
+            "mean_bps": None,
+            "median_bps": None,
+            "positive_pct": None,
+            "by_book": [],
+        }
 
-    if empirical is None:
-        status = "warn"
-    else:
-        diff = abs(empirical - nominal)
-        if diff <= tolerance:
-            status = "ok"
-        elif diff <= tolerance * 2:
+    working = clv_df.copy()
+    series = pd.to_numeric(working.get("clv_bps"), errors="coerce").dropna()
+    if series.empty:
+        return {
+            "status": "missing",
+            "samples": 0,
+            "mean_bps": None,
+            "median_bps": None,
+            "positive_pct": None,
+            "by_book": [],
+        }
+
+    by_book: List[dict[str, Any]] = []
+    if "book" in working.columns:
+        grouped = (
+            working.assign(clv_bps=series)
+            .dropna(subset=["clv_bps"])
+            .groupby(working["book"].astype(str), dropna=True)
+            ["clv_bps"]
+        )
+        for book, values in grouped:
+            vals = pd.to_numeric(values, errors="coerce").dropna()
+            if vals.empty:
+                continue
+            by_book.append(
+                {
+                    "book": str(book),
+                    "mean_bps": float(vals.mean()),
+                    "median_bps": float(vals.median()),
+                    "count": int(vals.size),
+                }
+            )
+
+    return {
+        "status": "ok",
+        "samples": int(series.size),
+        "mean_bps": float(series.mean()),
+        "median_bps": float(series.median()),
+        "positive_pct": float((series > 0).mean()),
+        "by_book": sorted(by_book, key=lambda row: row.get("book", "")),
+    }
+
+
+def _slo_metrics(
+    monitoring_cfg: dict[str, Any],
+    runtime_s: float,
+) -> dict[str, Any]:
+    target = float(monitoring_cfg.get("max_runtime_s", 600.0))
+    doctor_runtime: Optional[float] = None
+    if DOCTOR_LOG.exists():
+        for line in DOCTOR_LOG.read_text(encoding="utf-8").splitlines()[::-1]:
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if payload.get("task") == "monitor":
+                doctor_runtime = float(payload.get("runtime_s", math.nan))
+                break
+
+    observed = doctor_runtime if doctor_runtime and not math.isnan(doctor_runtime) else runtime_s
+    source = "doctor" if doctor_runtime else "local"
+    return {
+        "target": target,
+        "recent_runtime_s": float(observed),
+        "source": source,
+    }
+
+
+def _evaluate_checks(monitoring_cfg: dict[str, Any], metrics: dict[str, Any]) -> Tuple[Status, List[str], Dict[str, MetricCheck]]:
+    checks: Dict[str, MetricCheck] = {}
+    reasons: List[str] = []
+
+    def _status_from_delta(value: Optional[float], target: float, *, higher_is_better: bool) -> MetricCheck:
+        if value is None or math.isnan(value):
+            return MetricCheck(
+                name="missing",
+                status="warn",
+                value=value,
+                target=target,
+                reason="metric missing",
+            )
+        delta = value - target if higher_is_better else target - value
+        if delta >= 0:
+            status: Status = "ok"
+        elif delta > -0.05 if higher_is_better else delta > -0.01:
             status = "warn"
         else:
             status = "fail"
+        reason = None
+        if status != "ok":
+            direction = ">=" if higher_is_better else "<="
+            reason = f"expected {direction} {target:.3f} got {value:.3f}"
+        return MetricCheck(name="", status=status, value=value, target=target, reason=reason)
 
-    metrics = {
-        "empirical": {
-            "value": empirical,
-            "target": nominal,
-            "tolerance": tolerance,
-            "status": status,
-        }
-    }
-    detail = {"status": status, "metrics": metrics}
-    if empirical is None:
-        detail["message"] = "empirical coverage unavailable"
-    return detail
+    calib = metrics.get("calibration", {})
+    ece_target = float(monitoring_cfg.get("ece_target", 0.03))
+    ece_val = calib.get("ece") if isinstance(calib, dict) else None
+    check = _status_from_delta(ece_val, ece_target, higher_is_better=False)
+    check.name = "calibration_ece"
+    check.extra = {"source": calib.get("source"), "brier": calib.get("brier")}
+    checks[check.name] = check
+    if check.reason:
+        reasons.append(f"ECE {check.reason}")
 
+    coverage = metrics.get("coverage", {})
+    coverage_target = float(coverage.get("target", monitoring_cfg.get("min_coverage", 0.9)))
+    coverage_val = coverage.get("empirical") if isinstance(coverage, dict) else None
+    check = _status_from_delta(coverage_val, coverage_target, higher_is_better=True)
+    check.name = "coverage"
+    check.extra = {"source": coverage.get("source"), "nominal": coverage.get("nominal")}
+    checks[check.name] = check
+    if check.reason:
+        reasons.append(f"Coverage {check.reason}")
 
-def _clv_book_summary(df: pd.DataFrame) -> list[dict[str, Any]]:
-    if df.empty or "clv_bps" not in df.columns:
-        return []
-    records: list[dict[str, Any]] = []
-    grouped = df.groupby("book", dropna=False)
-    for book, group in grouped:
-        clv = group["clv_bps"].astype(float)
-        records.append(
-            {
-                "book": None if pd.isna(book) else str(book),
-                "mean_bps": float(clv.mean()),
-                "median_bps": float(clv.median()),
-                "positive_rate": float((clv > 0).mean()),
-                "count": int(len(group)),
-            }
-        )
-    return records
+    clv = metrics.get("clv", {})
+    clv_target = float(monitoring_cfg.get("clv_bps_target", 0.0))
+    clv_val = clv.get("mean_bps") if isinstance(clv, dict) else None
+    check = _status_from_delta(clv_val, clv_target, higher_is_better=True)
+    check.name = "clv"
+    check.extra = {"samples": clv.get("samples"), "positive_pct": clv.get("positive_pct")}
+    checks[check.name] = check
+    if check.reason:
+        reasons.append(f"CLV {check.reason}")
 
+    slo = metrics.get("slo", {})
+    slo_target = float(slo.get("target", monitoring_cfg.get("max_runtime_s", 600.0)))
+    slo_val = slo.get("recent_runtime_s") if isinstance(slo, dict) else None
+    check = _status_from_delta(slo_val, slo_target, higher_is_better=False)
+    check.name = "slo"
+    check.extra = {"source": slo.get("source")}
+    checks[check.name] = check
+    if check.reason:
+        reasons.append(f"Runtime {check.reason}")
 
-def _clv_details(df: pd.DataFrame, cfg: dict[str, Any]) -> dict[str, Any]:
-    target = float(cfg.get("clv_bps_target", 0.0) or 0.0)
-    positive_target = float(cfg.get("clv_positive_rate_target", 0.5) or 0.5)
+    status_order = {"ok": 0, "warn": 1, "fail": 2}
+    overall = "ok"
+    for metric in checks.values():
+        if status_order[metric.status] > status_order[overall]:
+            overall = metric.status
 
-    if df.empty or "clv_bps" not in df.columns:
-        return {
-            "status": "warn",
-            "metrics": {
-                "mean_bps": {"value": None, "target": target, "status": "warn"},
-                "median_bps": {"value": None, "target": target, "status": "warn"},
-                "positive_rate": {
-                    "value": None,
-                    "target": positive_target,
-                    "status": "warn",
-                },
-            },
-            "message": "no CLV artifacts available",
-            "books": [],
-        }
-
-    clv_series = df["clv_bps"].astype(float)
-    mean_val = float(clv_series.mean())
-    median_val = float(clv_series.median())
-    positive_rate = float((clv_series > 0).mean())
-
-    def _status(value: float, tgt: float, warn_band: float) -> str:
-        if value >= tgt:
-            return "ok"
-        if value >= tgt - warn_band:
-            return "warn"
-        return "fail"
-
-    mean_status = _status(mean_val, target, 10.0)
-    median_status = _status(median_val, target, 10.0)
-    pos_status = _status(positive_rate, positive_target, 0.1)
-
-    metrics = {
-        "mean_bps": {"value": mean_val, "target": target, "status": mean_status},
-        "median_bps": {"value": median_val, "target": target, "status": median_status},
-        "positive_rate": {
-            "value": positive_rate,
-            "target": positive_target,
-            "status": pos_status,
-        },
-    }
-
-    status = _status_from_values(mean_status, median_status, pos_status)
-    return {"status": status, "metrics": metrics, "books": _clv_book_summary(df)}
+    return overall, reasons, checks
 
 
-def _slo_details(runtime_s: float, cfg: dict[str, Any]) -> dict[str, Any]:
-    budget = float(cfg.get("max_runtime_s", 60) or 60)
-    if runtime_s <= budget:
-        status = "ok"
-    elif runtime_s <= budget * 1.5:
-        status = "warn"
-    else:
-        status = "fail"
-    metrics = {
-        "runtime_s": {"value": runtime_s, "target": budget, "status": status}
-    }
-    return {"status": status, "metrics": metrics}
-
-
-def _gather_summary_rows(details: dict[str, Any]) -> list[MetricRecord]:
-    rows: list[MetricRecord] = []
-    for section, info in details.items():
-        metrics = info.get("metrics", {})
-        for name, meta in metrics.items():
-            value = meta.get("value")
-            if isinstance(value, float):
-                value = round(value, 4)
-            target = meta.get("target")
-            rows.append(
-                MetricRecord(
-                    name=f"{section}.{name}",
-                    value=value,
-                    target=target,
-                    status=str(meta.get("status", "warn")),
-                )
-            )
-    return rows
-
-
-def _print_summary(details: dict[str, Any]) -> None:
-    rows = _gather_summary_rows(details)
-    if not rows:
-        return
-    print("[monitor] summary")
-    header = ("metric", "value", "target", "status")
-    formatted = [header]
-    for row in rows:
-        target = row.target
-        if isinstance(target, dict):
-            target = json.dumps(target, sort_keys=True)
-        formatted.append((row.name, str(row.value), str(target), row.status))
-
-    widths = [max(len(col[idx]) for col in formatted) for idx in range(4)]
-    for idx, line in enumerate(formatted):
-        prefix = "[monitor]" if idx == 0 else "          "
-        print(
-            f"{prefix} {line[0].ljust(widths[0])}  "
-            f"{line[1].ljust(widths[1])}  {line[2].ljust(widths[2])}  {line[3]}"
-        )
-
-
-def run_monitor(config_path: str = DEFAULT_CONFIG_PATH) -> Tuple[dict[str, Any], pathlib.Path]:
-    start = time.perf_counter()
-
-    config = _load_config(config_path)
-    monitoring_cfg = config.get("monitoring", {}) or {}
-    alerts_cfg = config.get("alerts", {}) or {}
-
+def run_monitor(config_path: pathlib.Path | None = None) -> Tuple[dict[str, Any], pathlib.Path]:
+    start = time.time()
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
-    calibration_report, calibration_path = _load_calibration_report()
-    picks_df, picks_path = _load_portfolio_picks()
-    clv_df, clv_path = _load_clv_table()
+    cfg = _load_config(config_path or DEFAULT_CONFIG_PATH)
+    monitoring_cfg = cfg.get("monitoring", {}) or {}
+    alerts_cfg = cfg.get("alerts", {}) or {}
 
-    calibration_details = _calibration_details(calibration_report, monitoring_cfg)
-    coverage_details = _coverage_details(calibration_report, monitoring_cfg)
-    clv_details = _clv_details(clv_df, monitoring_cfg)
+    meta_df = _load_meta_probabilities()
+    calibration_report = _load_calibration_report()
+    reports_summary = _load_reports_summary()
+    clv_df = _load_clv_snapshot()
 
-    runtime_s = time.perf_counter() - start
-    slo_details = _slo_details(runtime_s, monitoring_cfg)
+    metrics: dict[str, Any] = {}
+    metrics["calibration"] = _calibration_metrics(calibration_report, reports_summary, meta_df)
+    metrics["coverage"] = _coverage_metrics(calibration_report, reports_summary, monitoring_cfg, meta_df)
+    metrics["clv"] = _clv_metrics(clv_df)
 
-    details = {
-        "calibration": calibration_details,
-        "coverage": coverage_details,
-        "clv": clv_details,
-        "slo": slo_details,
+    backtest_summary = _latest_backtest_summary()
+    portfolio_df = _load_portfolio_snapshot()
+    metrics["backtest"] = backtest_summary
+    metrics["portfolio"] = {"has_picks": bool(portfolio_df is not None and not portfolio_df.empty)}
+
+    runtime_s = time.time() - start
+    metrics["slo"] = _slo_metrics(monitoring_cfg, runtime_s)
+
+    status, reasons, checks = _evaluate_checks(monitoring_cfg, metrics)
+
+    artifacts: Dict[str, Any] = {}
+    if isinstance(calibration_report, dict):
+        artifacts["calibration_report"] = True
+    if isinstance(backtest_summary, dict):
+        artifacts["backtest_summary"] = True
+    if meta_df is not None:
+        artifacts["meta_final_probs"] = True
+    if clv_df is not None and not clv_df.empty:
+        artifacts["market_clv"] = True
+    if portfolio_df is not None and not portfolio_df.empty:
+        artifacts["portfolio_picks"] = True
+
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "status": status,
+        "reasons": reasons,
+        "metrics": {name: metric.as_dict() for name, metric in checks.items()},
+        "details": metrics,
+        "artifacts": artifacts,
+        "timings": {"runtime_s": round(runtime_s, 3)},
     }
 
-    overall_status = _status_from_values(*(info["status"] for info in details.values()))
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    output_path = ARTIFACT_DIR / f"{HEALTH_PREFIX}{timestamp}.json"
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-    now_utc = _utcnow()
-    timestamp = now_utc.strftime("%Y%m%dT%H%M%SZ")
-    payload: dict[str, Any] = {
-        "generated_at": now_utc.isoformat().replace("+00:00", "Z"),
-        "status": overall_status,
-        "details": details,
-        "artifacts": {
-            "calibration_report": calibration_path.name if calibration_path else None,
-            "portfolio_picks": picks_path.name if picks_path else None,
-            "clv_table": clv_path.name if clv_path else None,
-        },
-        "portfolio_snapshot": {
-            "rows": int(len(picks_df)),
-            "active": int(picks_df.get("stake_amount", pd.Series(dtype=float)).gt(0).sum())
-            if not picks_df.empty
-            else 0,
-        },
-    }
+    channels: Iterable[str] = monitoring_cfg.get("alert_channels", []) or []
+    if status != "ok" and channels:
+        message = {
+            "title": "A22A Monitor",
+            "status": status,
+            "reasons": reasons,
+            "metrics": {name: metric.as_dict() for name, metric in checks.items()},
+        }
+        if "slack" in [channel.lower() for channel in channels]:
+            send_slack(message, webhook_env=alerts_cfg.get("slack_webhook_env", "SLACK_WEBHOOK_URL"))
+        remaining = [ch for ch in channels if ch.lower() != "slack"]
+        if remaining:
+            client = AlertsClient(alerts_cfg)
+            payload_obj = AlertPayload(title="A22A Monitor", status=status, body=message)
+            for channel in remaining:
+                client.send(channel, payload_obj)
 
-    output_path = ARTIFACT_DIR / f"health_{timestamp}.json"
-    output_path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str))
-
-    _print_summary(details)
-
-    alert_channels = monitoring_cfg.get("alert_channels", []) or []
-    alerts_client = AlertsClient(alerts_cfg, alert_channels)
-    if overall_status != "ok":
-        alerts_client.notify({"kind": "monitoring.health", **payload})
-    else:
-        print("[monitor] all checks within thresholds — no alerts sent")
-
-    print(f"[monitor] wrote {output_path}")
+    print(f"[monitor] status={status} reasons={len(reasons)} runtime={runtime_s:.2f}s")
+    print(f"[monitor] wrote {output_path.relative_to(pathlib.Path('.'))}")
     return payload, output_path
 
 
@@ -403,6 +440,5 @@ def main() -> None:
     run_monitor()
 
 
-if __name__ == "__main__":  # pragma: no cover - CLI hook
+if __name__ == "__main__":  # pragma: no cover - CLI entrypoint
     main()
-
