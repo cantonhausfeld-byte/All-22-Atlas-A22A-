@@ -52,16 +52,16 @@ def _load_config(path: pathlib.Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
     return data or {}
 
 
-def _latest_json(directory: pathlib.Path, prefix: str) -> dict[str, Any] | None:
+def _latest_json(directory: pathlib.Path, prefix: str) -> tuple[dict[str, Any], pathlib.Path] | tuple[None, None]:
     if not directory.exists():
-        return None
+        return None, None
     candidates = sorted(directory.glob(f"{prefix}*.json"))
     if not candidates:
-        return None
+        return None, None
     try:
-        return json.loads(candidates[-1].read_text())
+        return json.loads(candidates[-1].read_text()), candidates[-1]
     except json.JSONDecodeError:
-        return None
+        return None, candidates[-1]
 
 
 def _synthetic_summary() -> dict[str, Any]:
@@ -72,6 +72,7 @@ def _synthetic_summary() -> dict[str, Any]:
         "ece": 0.02,
         "clv_bps_mean": 5.0,
         "coverage": 0.91,
+        "source": "synthetic",
     }
 
 
@@ -120,12 +121,21 @@ def run_monitor(config_path: pathlib.Path | None = None) -> Tuple[dict[str, Any]
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
     cfg = _load_config(config_path or DEFAULT_CONFIG_PATH)
-    summary = _latest_json(BACKTEST_DIR, "summary_")
+    summary, summary_path = _latest_json(BACKTEST_DIR, "summary_")
     if not summary:
         summary = _synthetic_summary()
+        summary_path = None
 
     status, metrics = _derive_metrics(summary, cfg)
     payload = _build_payload(status, metrics, time.time() - start)
+    payload.update(
+        {
+            "source": summary.get("source", "artifact"),
+            "inputs": {
+                "backtest_summary": str(summary_path) if summary_path else None,
+            },
+        }
+    )
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     output_path = ARTIFACT_DIR / f"{HEALTH_PREFIX}{timestamp}.json"

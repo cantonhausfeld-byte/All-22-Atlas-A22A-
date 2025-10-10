@@ -156,6 +156,7 @@ def run_backtest(config_path: pathlib.Path | None = None) -> Tuple[dict[str, Any
         "results": summaries,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "timings": {"runtime_s": round(time.time() - start, 3)},
+        "source": "synthetic",
     }
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
